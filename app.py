@@ -9,22 +9,15 @@ GEMINI_API_KEY = "AIzaSyCsB5NMrCY0OPsXx53u5W7onVAEsG0qjjE"
 genai.configure(api_key=GEMINI_API_KEY)
 model_gemini = genai.GenerativeModel('gemini-1.5-flash')
 
-# Gemini ဖြင့် ဘာသာပြန်ပေးမည့် Function
 def translate_with_gemini(text):
     if not text.strip():
         return ""
-    
-    # AI ကို ပိုမိုနားလည်စေရန် ခိုင်းစေချက် (Prompt)
-    prompt = f"""Translate this text into natural, spoken Myanmar language (Burmese). 
-    Context: This is for a video subtitle. 
-    Tone: Friendly and conversational. 
-    Text to translate: {text}"""
-    
+    prompt = f"Translate this text into natural, spoken Myanmar language (Burmese) for video subtitles: {text}"
     try:
         response = model_gemini.generate_content(prompt)
         return response.text.strip()
-    except Exception as e:
-        return text # Error ဖြစ်ရင် မူရင်းစာပဲပြမယ်
+    except Exception:
+        return text
 
 def format_timestamp(seconds):
     td = timedelta(seconds=seconds)
@@ -37,32 +30,23 @@ def format_timestamp(seconds):
 
 def write_srt(segments):
     srt_content = ""
-    # တိုးတက်မှုနှုန်းကို ပြသရန်
     progress_bar = st.progress(0)
     total_segments = len(segments)
     
     for i, segment in enumerate(segments, start=1):
         start = format_timestamp(segment['start'])
         end = format_timestamp(segment['end'])
-        
-        # Whisper မှ ရလာသော စာသားကို Gemini ဖြင့် ဘာသာပြန်ခြင်း
         original_text = segment['text'].strip()
         mm_text = translate_with_gemini(original_text)
-            
         srt_content += f"{i}\n{start} --> {end}\n{mm_text}\n\n"
-        
-        # Progress Update
         progress_bar.progress(i / total_segments)
         
     return srt_content
 
-# --- Website Interface ---
-st.set_page_config(page_title="NAING MIN HTET Gemini Translator", page_icon="🎬")
-
+# --- Website UI ---
+st.set_page_config(page_title="NMH Gemini Translator", page_icon="🎬")
 st.title("🎬 NMH Gemini AI Subtitle Maker")
-st.write("Gemini AI သုံးထားသဖြင့် ဘာသာပြန် မြန်မာဆန်ဆန် ပိုမိုမှန်ကန်ပါသည်")
 
-# Sidebar
 with st.sidebar:
     st.image("https://img.icons8.com/clouds/200/000000/microchip.png")
     st.info("NMH - Digital Marketer at Htoo Khit Gold Shop")
@@ -74,4 +58,28 @@ if uploaded_file is not None:
     st.video(uploaded_file)
     if st.button("Gemini AI ဖြင့် မြန်မာ SRT ထုတ်မည်"):
         with st.spinner("Gemini က ဗီဒီယိုကို နားထောင်ပြီး မြန်မာလို ဘာသာပြန်နေပါသည်..."):
+            # ဗီဒီယိုကို ယာယီသိမ်းဆည်းခြင်း
+            with open("temp_video.mp4", "wb") as f:
+                f.write(uploaded_file.getbuffer())
             
+            try:
+                # Whisper model load လုပ်ခြင်း
+                model_whisper = whisper.load_model("base")
+                # တရုတ်/အခြားဘာသာကို အင်္ဂလိပ်အရင်ပြန်
+                result = model_whisper.transcribe("temp_video.mp4", task="translate")
+                
+                # Gemini ဖြင့် မြန်မာလို ထပ်ဆင့်ပြန်ခြင်း
+                srt_output = write_srt(result['segments'])
+                
+                st.success("Gemini SRT ထုတ်ယူမှု အောင်မြင်ပါသည်!")
+                st.download_button("Download Myanmar SRT", srt_output, "gemini_translated.srt")
+                
+                with st.expander("စာသားများကို ကြည့်ရှုရန်"):
+                    st.text(srt_output)
+            except Exception as e:
+                st.error(f"Error ဖြစ်ပွားပါသည်: {e}")
+            
+            # အလုပ်ပြီးလျှင် ယာယီဖိုင်ကို ဖျက်ခြင်း
+            if os.path.exists("temp_video.mp4"):
+                os.remove("temp_video.mp4")
+                
