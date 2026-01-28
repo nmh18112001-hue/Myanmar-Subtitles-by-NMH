@@ -1,72 +1,64 @@
 import streamlit as st
-import whisper
+import google.generativeai as genai
+import time
 import os
-from datetime import timedelta
-from deep_translator import GoogleTranslator
 
-# ဘာသာပြန်စက်ကို စတင်ခြင်း (Microsoft/Google Engine သုံးပါမည်)
-translator = GoogleTranslator(source='auto', target='my')
+# --- Gemini API Config ---
+GEMINI_API_KEY = "AIzaSyCsB5NMrCY0OPsXx53u5W7onVAEsG0qjjE"
+genai.configure(api_key=GEMINI_API_KEY)
 
-def format_timestamp(seconds):
-    td = timedelta(seconds=seconds)
-    total_seconds = int(td.total_seconds())
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    secs = total_seconds % 60
-    millis = int(td.microseconds / 1000)
-    return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
+def upload_to_gemini(path, mime_type=None):
+    file = genai.upload_file(path, mime_type=mime_type)
+    return file
 
-def write_srt(segments):
-    srt_content = ""
-    progress_bar = st.progress(0)
-    total_segments = len(segments)
+# --- UI Interface ---
+st.set_page_config(page_title="NMH Gemini Subtitle Expert", layout="wide")
+st.title("🎬 NMH Gemini Direct Subtitle Tool")
+
+tab1, tab2 = st.tabs(["Step 1: Video to English SRT", "Step 2: English SRT to Myanmar"])
+
+# --- Part 1: Video to English SRT ---
+with tab1:
+    st.header("ဗီဒီယိုမှ အင်္ဂလိပ်စာတန်းထုတ်ယူခြင်း")
+    video_file = st.file_uploader("Video တင်ပါ", type=["mp4", "mov", "avi"], key="vid_up")
     
-    for i, segment in enumerate(segments, start=1):
-        start = format_timestamp(segment['start'])
-        end = format_timestamp(segment['end'])
-        
-        # မူရင်းအင်္ဂလိပ်စာသားကို မြန်မာလို တိုက်ရိုက်ပြန်ခြင်း
-        original_text = segment['text'].strip()
-        try:
-            mm_text = translator.translate(original_text)
-        except:
-            mm_text = original_text # Error ဖြစ်ပါက မူရင်းစာပြရန်
+    if video_file and st.button("Generate English SRT"):
+        with st.spinner("Gemini က ဗီဒီယိုကို ကြည့်ပြီး အင်္ဂလိပ် SRT ထုတ်ပေးနေသည်..."):
+            with open("temp_v.mp4", "wb") as f:
+                f.write(video_file.getbuffer())
             
-        srt_content += f"{i}\n{start} --> {end}\n{mm_text}\n\n"
-        progress_bar.progress(i / total_segments)
-        
-    return srt_content
+            # Gemini ဆီ Video ပို့ခြင်း
+            gemini_file = upload_to_gemini("temp_v.mp4", mime_type="video/mp4")
+            while gemini_file.state.name == "PROCESSING":
+                time.sleep(2)
+                gemini_file = genai.get_file(gemini_file.name)
 
-st.set_page_config(page_title="NMH Subtitle Tool", page_icon="🎬")
-st.title("🎬 NMH Myanmar Subtitle Tool")
-st.write("Professional SRT Generator (No Key Required)")
-
-uploaded_file = st.file_uploader("ဗီဒီယို တင်ပေးပါ", type=["mp4", "mkv", "avi", "mov"])
-
-if uploaded_file is not None:
-    st.video(uploaded_file)
-    if st.button("မြန်မာစာတန်းထိုး (SRT) စတင်ထုတ်မည်"):
-        with st.spinner("အသံကို နားထောင်ပြီး မြန်မာလို ဘာသာပြန်နေပါသည်..."):
-            with open("temp.mp4", "wb") as f:
-                f.write(uploaded_file.getbuffer())
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = "Watch this video and generate a precise English SRT subtitle file with timestamps. Output only the SRT content."
             
-            try:
-                # Whisper Model Load
-                model = whisper.load_model("base")
-                # Task Translate က အသံကို စာသားအရင်ပြောင်းပေးပါသည်
-                result = model.transcribe("temp.mp4", task="translate")
-                
-                # မြန်မာ SRT ထုတ်ယူခြင်း
-                srt_output = write_srt(result['segments'])
-                
-                st.success("အောင်မြင်ပါသည်!")
-                st.download_button("Download Myanmar SRT", srt_output, "myanmar_sub.srt")
-                
-                with st.expander("စာသားများကို ကြည့်ရှုရန်"):
-                    st.text(srt_output)
-            except Exception as e:
-                st.error(f"Error: {e}")
+            response = model.generate_content([gemini_file, prompt])
+            srt_eng = response.text.strip()
             
-            if os.path.exists("temp.mp4"):
-                os.remove("temp.mp4")
-                
+            st.success("English SRT ရပါပြီ!")
+            st.download_button("Download English SRT", srt_eng, "english.srt")
+            st.text_area("Preview", srt_eng, height=200)
+
+# --- Part 2: English SRT to Myanmar ---
+with tab2:
+    st.header("အင်္ဂလိပ် SRT မှ မြန်မာဘာသာပြန်ခြင်း")
+    srt_file = st.file_uploader("English SRT ဖိုင်ကို ပြန်တင်ပါ", type=["srt"], key="srt_up")
+    
+    if srt_file and st.button("Translate to Myanmar"):
+        with st.spinner("Gemini က မြန်မာလို အလှပဆုံး ဘာသာပြန်ပေးနေသည်..."):
+            eng_content = srt_file.read().decode("utf-8")
+            
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            prompt = f"Translate the following English SRT content into natural, conversational Myanmar language. Keep the timestamps exactly the same. Output only the translated SRT content: \n\n{eng_content}"
+            
+            response = model.generate_content(prompt)
+            srt_mm = response.text.strip()
+            
+            st.success("မြန်မာ SRT ရပါပြီ!")
+            st.download_button("Download Myanmar SRT", srt_mm, "myanmar_final.srt")
+            st.text_area("Preview", srt_mm, height=200)
+            
