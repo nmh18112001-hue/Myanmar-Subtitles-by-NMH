@@ -4,15 +4,18 @@ import os
 from datetime import timedelta
 import google.generativeai as genai
 
-# --- Gemini API Configuration ---
+# --- Gemini API Config ---
+# ညီကိုပေးထားတဲ့ Key ကို အသုံးပြုထားပါတယ်
 GEMINI_API_KEY = "AIzaSyCsB5NMrCY0OPsXx53u5W7onVAEsG0qjjE"
 genai.configure(api_key=GEMINI_API_KEY)
 model_gemini = genai.GenerativeModel('gemini-1.5-flash')
 
-def translate_with_gemini(text):
+# Gemini ဖြင့် မြန်မာလို ဘာသာပြန်ခိုင်းသည့် Function
+def translate_to_myanmar(text):
     if not text.strip():
         return ""
-    prompt = f"Translate this text into natural, spoken Myanmar language (Burmese) for video subtitles: {text}"
+    # AI ကို မြန်မာလိုပဲ ပြန်ပေးဖို့ တိတိကျကျ ခိုင်းစေခြင်း
+    prompt = f"Translate the following text into natural, fluent Myanmar (Burmese) language only. This is for video subtitles: '{text}'"
     try:
         response = model_gemini.generate_content(prompt)
         return response.text.strip()
@@ -36,50 +39,38 @@ def write_srt(segments):
     for i, segment in enumerate(segments, start=1):
         start = format_timestamp(segment['start'])
         end = format_timestamp(segment['end'])
+        
+        # Whisper မှ ရလာသော အင်္ဂလိပ်စာကို Gemini ဖြင့် မြန်မာလို ပြန်ခိုင်းခြင်း
         original_text = segment['text'].strip()
-        mm_text = translate_with_gemini(original_text)
+        mm_text = translate_to_myanmar(original_text)
+            
         srt_content += f"{i}\n{start} --> {end}\n{mm_text}\n\n"
         progress_bar.progress(i / total_segments)
         
     return srt_content
 
-# --- Website UI ---
-st.set_page_config(page_title="NMH Gemini Translator", page_icon="🎬")
-st.title("🎬 NMH Gemini AI Subtitle Maker")
-
-with st.sidebar:
-    st.image("https://img.icons8.com/clouds/200/000000/microchip.png")
-    st.info("NMH - Digital Marketer at Htoo Khit Gold Shop")
-    st.write("Gemini 1.5 Flash Model ကို အသုံးပြုထားပါသည်။")
+st.title("🎬 NMH Gemini Myanmar Subtitle Maker")
 
 uploaded_file = st.file_uploader("ဗီဒီယို တင်ပေးပါ", type=["mp4", "mkv", "avi", "mov"])
 
 if uploaded_file is not None:
     st.video(uploaded_file)
-    if st.button("Gemini AI ဖြင့် မြန်မာ SRT ထုတ်မည်"):
-        with st.spinner("Gemini က ဗီဒီယိုကို နားထောင်ပြီး မြန်မာလို ဘာသာပြန်နေပါသည်..."):
-            # ဗီဒီယိုကို ယာယီသိမ်းဆည်းခြင်း
-            with open("temp_video.mp4", "wb") as f:
+    if st.button("မြန်မာစာတန်းထိုး (SRT) ထုတ်မည်"):
+        with st.spinner("Gemini AI က မြန်မာလို ဘာသာပြန်ပေးနေပါသည်..."):
+            with open("temp.mp4", "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
             try:
-                # Whisper model load လုပ်ခြင်း
+                # model ကို 'base' အသုံးပြုခြင်းက မြန်ဆန်စေပါသည်
                 model_whisper = whisper.load_model("base")
-                # တရုတ်/အခြားဘာသာကို အင်္ဂလိပ်အရင်ပြန်
-                result = model_whisper.transcribe("temp_video.mp4", task="translate")
+                # task="translate" သည် အသံကို အင်္ဂလိပ်စာသား အရင်ပြောင်းပေးပါသည်
+                result = model_whisper.transcribe("temp.mp4", task="translate")
                 
-                # Gemini ဖြင့် မြန်မာလို ထပ်ဆင့်ပြန်ခြင်း
+                # အင်္ဂလိပ်စာသားများကို မြန်မာလို ပြောင်းလဲ၍ SRT ရေးသားခြင်း
                 srt_output = write_srt(result['segments'])
                 
-                st.success("Gemini SRT ထုတ်ယူမှု အောင်မြင်ပါသည်!")
-                st.download_button("Download Myanmar SRT", srt_output, "gemini_translated.srt")
-                
-                with st.expander("စာသားများကို ကြည့်ရှုရန်"):
-                    st.text(srt_output)
+                st.success("မြန်မာ SRT ထုတ်ယူမှု အောင်မြင်ပါသည်!")
+                st.download_button("Download Myanmar SRT", srt_output, "myanmar_sub.srt")
             except Exception as e:
-                st.error(f"Error ဖြစ်ပွားပါသည်: {e}")
-            
-            # အလုပ်ပြီးလျှင် ယာယီဖိုင်ကို ဖျက်ခြင်း
-            if os.path.exists("temp_video.mp4"):
-                os.remove("temp_video.mp4")
-                
+                st.error(f"Error: {e}")
+
